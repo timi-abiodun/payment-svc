@@ -25,6 +25,8 @@ return new class extends Migration
             $table->json('meta')->nullable();
             $table->timestamps();
             $table->unique(['booking_id', 'tranche']);       // idempotency guard: prevents duplicate tranches per booking
+            $table->index(['vendor_id', 'created_at']);   // dashboard listing
+            $table->index(['vendor_id', 'status']);       // paid / outstanding sums
         });
     }
 
