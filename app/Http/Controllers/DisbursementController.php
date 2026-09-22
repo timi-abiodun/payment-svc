@@ -31,19 +31,34 @@ class DisbursementController extends Controller
         return $this->svc->confirmEvent($bookingId);
     }
 
-    public function show(string $vendorId)
+    public function show(Request $request, string $vendorId)
     {
-        $rows = Disbursement::where('vendor_id', $vendorId)->latest()->get();
+        // One query for both totals, computed in the database
+        $totals = Disbursement::where('vendor_id', $vendorId)
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN status = ? THEN amount_kobo END), 0) AS paid,
+                COALESCE(SUM(CASE WHEN status IN (?, ?, ?) THEN amount_kobo END), 0) AS outstanding',
+                [
+                    DisbursementStatus::SUCCESS->value,
+                    DisbursementStatus::SCHEDULED->value,
+                    DisbursementStatus::PENDING->value,
+                    DisbursementStatus::PROCESSING->value,
+                ]
+            )
+            ->toBase()
+            ->first();
+
+        $disbursements = Disbursement::where('vendor_id', $vendorId)
+            ->select(['id', 'booking_id', 'tranche', 'amount_kobo', 'status', 'provider_ref', 'created_at']) // no `meta`
+            ->latest()
+            ->latest('id')                                   // stable order when timestamps tie
+            ->paginate(min((int) $request->query('per_page', 50), 100));
 
         return [
             'vendor_id' => $vendorId,
-            'paid_kobo' => $rows->where('status', DisbursementStatus::SUCCESS)->sum('amount_kobo'),
-            'outstanding_kobo' => $rows->whereIn('status', [
-                DisbursementStatus::SCHEDULED, 
-                DisbursementStatus::PENDING, 
-                DisbursementStatus::PROCESSING
-            ])->sum('amount_kobo'),
-            'disbursements' => $rows,
+            'paid_kobo' => (int) $totals->paid,
+            'outstanding_kobo' => (int) $totals->outstanding,
+            'disbursements' => $disbursements,
         ];
     }
 }
