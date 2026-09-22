@@ -27,15 +27,12 @@ class DisbursementService
     /** Called on event-day confirmation: release the balance. */
     public function confirmEvent(string $bookingId): Disbursement
     {
-        // Enums cast automatically if configured in the model, but manual queries use string values
-        $bal = Disbursement::where([
-            'booking_id' => $bookingId, 
-            'tranche' => TrancheType::BALANCE->value
-        ])->firstOrFail();
+        $bal = Disbursement::where('booking_id', $bookingId)
+            ->where('tranche', TrancheType::BALANCE->value)
+            ->firstOrFail();
 
-        if ($bal->status === DisbursementStatus::SCHEDULED) {
-            $this->pay($bal);
-        }
+        $this->pay($bal);   // the claim inside pay() decides whether anything happens
+
         return $bal->fresh();
     }
 
@@ -54,33 +51,57 @@ class DisbursementService
 
     private function pay(Disbursement $d): void
     {
-        if (in_array($d->status, [DisbursementStatus::PROCESSING, DisbursementStatus::SUCCESS], true)) {
-            return; // idempotent
-        }
-
+        // Look up the recipient BEFORE claiming, so a missing vendor can't leave a row stuck in "processing"
         $recipient = VendorRecipient::where('vendor_id', $d->vendor_id)->firstOrFail();
+
+        // Atomic claim: only one caller can move the row out of these states
+        $claimed = Disbursement::whereKey($d->id)
+            ->whereIn('status', [
+                DisbursementStatus::SCHEDULED->value,
+                DisbursementStatus::PENDING->value,
+                DisbursementStatus::FAILED->value,     // allows retry after a failure
+            ])
+            ->update(['status' => DisbursementStatus::PROCESSING->value]);
+
+        if ($claimed !== 1) {
+            return; // already processing, paid, or claimed by a concurrent request
+        }
 
         try {
             $r = $this->gateway->transfer(
-                $recipient->recipient_code, 
-                $d->amount_kobo, 
-                $d->reference,
+                $recipient->recipient_code, $d->amount_kobo, $d->reference,
                 "{$d->tranche->value} for booking {$d->booking_id}"
             );
 
-            $d->update([
-                'status' => match ($r['status']) { 
-                    'success' => DisbursementStatus::SUCCESS->value, 
-                    'failed' => DisbursementStatus::FAILED->value, 
-                    default => DisbursementStatus::PROCESSING->value 
-                },
-                'provider_ref' => $r['provider_ref'],
-            ]);
+            $this->settle($d, match ($r['status']) {
+                'success' => DisbursementStatus::SUCCESS,
+                'failed' => DisbursementStatus::FAILED,
+                default => DisbursementStatus::PROCESSING,
+            }, providerRef: $r['provider_ref']);
         } catch (\Throwable $e) {
-            $d->update([
-                'status' => DisbursementStatus::FAILED->value, 
-                'meta' => ['error' => $e->getMessage()]
-            ]);
+            $this->settle($d, DisbursementStatus::FAILED, meta: ['error' => $e->getMessage()]);
         }
+    }
+
+    private function settle(
+        Disbursement $d,
+        DisbursementStatus $status,
+        ?string $providerRef = null,
+        ?array $meta = null
+    ): void {
+        $values = array_filter([
+            'provider_ref' => $providerRef,
+            'meta' => $meta ? json_encode($meta) : null,
+        ]);
+
+        if ($values) {
+            Disbursement::whereKey($d->id)->update($values);
+        }
+
+        // Move status only if we still own the claim. If the webhook already
+        // finalised the row, we don't overwrite it with an older state.
+        Disbursement::whereKey($d->id)
+            ->where('status', DisbursementStatus::PROCESSING->value)
+            ->update(['status' => $status->value]);
     }
 }
