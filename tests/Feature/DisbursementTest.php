@@ -27,4 +27,22 @@ class DisbursementTest extends TestCase
         $this->postJson('/api/v1/budget/v1/disburse', ['booking_id' => 'b1', 'total_kobo' => 1_000_000], $h)->assertCreated();
         $this->assertDatabaseCount('disbursements', 2);
     }
+
+
+    public function test_confirming_twice_pays_balance_only_once(): void
+    {
+        config(['services.payments.driver' => 'fake', 'services.internal.token' => 't']);
+        VendorRecipient::create(['vendor_id' => 'v1', 'recipient_code' => 'RCP_x']);
+        $h = ['Authorization' => 'Bearer t'];
+
+        $this->postJson('/api/v1/budget/v1/disburse', ['booking_id' => 'b1', 'total_kobo' => 1_000_000], $h)
+            ->assertCreated();
+
+        $first = $this->postJson('/api/v1/bookings/b1/confirm-event', [], $h)->json('provider_ref');
+        $second = $this->postJson('/api/v1/bookings/b1/confirm-event', [], $h)->json('provider_ref');
+
+        $this->assertNotNull($first);           // guards against another silent-null pass
+        $this->assertSame($first, $second);
+        $this->assertDatabaseCount('disbursements', 2);
+    }
 }
