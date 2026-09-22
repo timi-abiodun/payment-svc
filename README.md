@@ -48,10 +48,12 @@ POST /api/v1/budget/v1/disburse
 Set the environment's `base_url` to:
 
 ```
-http://127.0.0.1:8000/api/v1
+https://payment-svc-4jdo.onrender.com/api/v1
 ```
 
 Requests then read `{{base_url}}/health`, `{{base_url}}/budget/v1/disburse`, etc.
+
+Protected routes need `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>` — request the current token value from the team rather than using a placeholder; it's a shared secret, not committed anywhere in the repo.
 
 ## How it works
 
