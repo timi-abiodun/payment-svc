@@ -80,3 +80,7 @@ php artisan test
 - Vendors need a row in `vendor_recipients` (a Paystack recipient code) before they can be paid.
 - For local webhook testing, expose the app with ngrok and set the URL in the Paystack test dashboard.
 - Never commit `.env`.
+
+## Known limitation
+
+Real Paystack transfers are blocked in this environment — new Paystack accounts default to "starter" tier, which cannot initiate third-party payouts (vendor disbursement) until business verification is complete. The `paystack` driver is implemented and tested against the sandbox API up to that point; `fake` is the driver used for demos until verification clears.
