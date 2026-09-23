@@ -20,13 +20,15 @@ return new class extends Migration
             $table->string('tranche');                       // deposit | balance
             $table->unsignedBigInteger('amount_kobo');
             $table->string('status')->default(DisbursementStatus::SCHEDULED->value);    // scheduled|pending|processing|success|failed
-            $table->string('reference')->unique();
-            $table->string('provider_ref')->nullable();
-            $table->json('meta')->nullable();
+            $table->string('reference')->unique(); // a unique reference for this disbursement, used for idempotency
+            $table->string('provider_ref')->nullable()->unique();  // the gateway's reference for this payout if any
+            $table->json('meta')->nullable(); // any extra info from the gateway, e.g. failure reason
             $table->timestamps();
             $table->unique(['booking_id', 'tranche']);       // idempotency guard: prevents duplicate tranches per booking
             $table->index(['vendor_id', 'created_at']);   // dashboard listing
             $table->index(['vendor_id', 'status']);       // paid / outstanding sums
+
+            $table->foreign('vendor_id')->references('vendor_id')->on('vendor_recipients'); // ensures that a disbursement can only be created for a vendor that has a recipient set up
         });
     }
 

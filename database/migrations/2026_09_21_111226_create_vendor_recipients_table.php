@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('vendor_recipients', function (Blueprint $table) {
             $table->id();
             $table->string('vendor_id')->unique();
-            $table->string('recipient_code');
+            $table->string('recipient_code'); // the gateway's reference for this recipient
             $table->timestamps();
         });
     }
